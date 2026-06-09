@@ -35,14 +35,14 @@ int match_method = 0;
 int max_Trackbar = 5;
 int maxpyrlevel = 5;   // jumlah level pyramid (seperti Program 3 teman)
 
-struct MethodInfo { int id; string name; string label; bool useMin; };
+struct MethodInfo { int id; string name; string label; bool useMin; bool normed; };
 vector<MethodInfo> METHODS = {
-    { TM_SQDIFF,        "0_SQDIFF",          "0: SQDIFF",           true  },
-    { TM_SQDIFF_NORMED, "1_SQDIFF_NORMED",   "1: SQDIFF NORMED",    true  },
-    { TM_CCORR,         "2_TM_CCORR",        "2: TM CCORR",         false },
-    { TM_CCORR_NORMED,  "3_TM_CCORR_NORMED", "3: TM CCORR NORMED",  false },
-    { TM_CCOEFF,        "4_TM_COEFF",        "4: TM COEFF",         false },
-    { TM_CCOEFF_NORMED, "5_TM_COEFF_NORMED", "5: TM COEFF NORMED",  false },
+    { TM_SQDIFF,        "0_SQDIFF",          "0: SQDIFF",           true,  false },
+    { TM_SQDIFF_NORMED, "1_SQDIFF_NORMED",   "1: SQDIFF NORMED",    true,  true  },
+    { TM_CCORR,         "2_TM_CCORR",        "2: TM CCORR",         false, false },
+    { TM_CCORR_NORMED,  "3_TM_CCORR_NORMED", "3: TM CCORR NORMED",  false, true  },
+    { TM_CCOEFF,        "4_TM_COEFF",        "4: TM COEFF",         false, false },
+    { TM_CCOEFF_NORMED, "5_TM_COEFF_NORMED", "5: TM COEFF NORMED",  false, true  },
 };
 
 Mat g_lastDisplay;
@@ -70,11 +70,10 @@ Rect autoTemplateRect(const Mat& src, int side)
 void MatchingMethod(int, void*)
 {
     const MethodInfo& m = METHODS[match_method];
-
     Mat img_display; img.copyTo(img_display);
 
-    double bestScore = 0; Point bestLoc; Size bestSize; bool first = true;
-    Mat bestResult;
+    bool first = true; double bestComp = 0;
+    Point bestLoc; Size bestSize; Mat bestRaw;
 
     for (int i = 0; i < maxpyrlevel; i++)
     {
@@ -87,41 +86,40 @@ void MatchingMethod(int, void*)
         if (tempPyr.cols > img.cols || tempPyr.rows > img.rows) continue;
         if (tempPyr.cols < 4 || tempPyr.rows < 4) continue;
 
-        matchTemplate(img, tempPyr, result, m.id);
-        normalize(result, result, 0, 1, NORM_MINMAX, -1, Mat());
+        // Skor MENTAH (jangan dinormalisasi dulu, supaya bisa dibandingkan antar-skala)
+        Mat res; matchTemplate(img, tempPyr, res, m.id);
+        double mn, mx; Point mnL, mxL;
+        minMaxLoc(res, &mn, &mx, &mnL, &mxL, Mat());
 
-        double minVal, maxVal; Point minLoc, maxLoc, matchLoc;
-        minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
+        double rawPeak = m.useMin ? mn : mx;
+        Point  loc = m.useMin ? mnL : mxL;
+        // skor sebanding antar-skala: normed apa adanya, mentah dibagi luas (per-piksel)
+        double comp = m.normed ? rawPeak : rawPeak / (double)(tempPyr.cols * tempPyr.rows);
 
-        double curScore;
-        if (m.useMin) { matchLoc = minLoc; curScore = minVal; }
-        else { matchLoc = maxLoc; curScore = maxVal; }
-
-        bool better = first || (m.useMin ? (curScore < bestScore) : (curScore > bestScore));
+        bool better = first || (m.useMin ? (comp < bestComp) : (comp > bestComp));
         if (better) {
-            first = false; bestScore = curScore;
-            bestLoc = matchLoc; bestSize = tempPyr.size();
-            result.copyTo(bestResult);
+            first = false; bestComp = comp;
+            bestLoc = loc; bestSize = tempPyr.size();
+            res.copyTo(bestRaw);
         }
     }
 
-    // Kotak hijau + teks skor (gaya laporan teman)
+    // Kotak hijau pada match terbaik (tanpa teks skor)
     rectangle(img_display, bestLoc,
         Point(bestLoc.x + bestSize.width, bestLoc.y + bestSize.height),
         Scalar(0, 255, 0), 2);
-    string scoreText = "Score: " + to_string(bestScore);
-    putText(img_display, scoreText, Point(10, 30),
-        FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 255), 2);
+
+    // Peta hasil skala pemenang untuk Result Window
+    Mat bestNorm; normalize(bestRaw, bestNorm, 0, 1, NORM_MINMAX, -1, Mat());
 
     setWindowTitle(image_window, "Source Image  -  " + m.label);
     setWindowTitle(result_window, "Result Window -  " + m.label);
-
     imshow(image_window, img_display);
-    imshow(result_window, bestResult);
+    imshow(result_window, bestNorm);
 
     g_lastDisplay = img_display.clone();
-    printf("%-20s | match=(%d,%d) | size=%dx%d | score=%.6f\n",
-        m.label.c_str(), bestLoc.x, bestLoc.y, bestSize.width, bestSize.height, bestScore);
+    printf("%-20s | match=(%d,%d) | size=%dx%d\n",
+        m.label.c_str(), bestLoc.x, bestLoc.y, bestSize.width, bestSize.height);
 }
 
 int main()
